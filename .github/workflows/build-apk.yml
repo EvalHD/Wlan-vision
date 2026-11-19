@@ -1,0 +1,66 @@
+name: APK bauen
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZIP-Dateien im Repository entpacken
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            echo "Entpacke $z ..."
+            unzip -o -q "$z" -d _entpackt
+          done
+
+      - name: Projektordner finden
+        id: proj
+        run: |
+          if [ -d _entpackt ]; then ROOT=_entpackt; else ROOT=.; fi
+          SETTINGS=$(find "$ROOT" -maxdepth 4 \( -name settings.gradle.kts -o -name settings.gradle \) -not -path "*/.git/*" | head -n 1)
+          if [ -z "$SETTINGS" ]; then
+            echo "Kein Gradle-Projekt gefunden"
+            exit 1
+          fi
+          DIR=$(dirname "$SETTINGS")
+          echo "Projektordner: $DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: APK bauen
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: APK einsammeln
+        run: |
+          mkdir -p out
+          find "${{ steps.proj.outputs.dir }}" -path "*build/outputs/apk/debug/*.apk" -exec cp {} out/WLAN-Monitor.apk \;
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WLAN-Monitor-APK
+          path: out/WLAN-Monitor.apk
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: WLAN Monitor Build ${{ github.run_number }}
+          files: out/WLAN-Monitor.apk
